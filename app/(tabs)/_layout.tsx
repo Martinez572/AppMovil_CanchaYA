@@ -1,70 +1,63 @@
-import { SymbolView } from 'expo-symbols';
-import { Link, Tabs } from 'expo-router';
-import { Platform, Pressable } from 'react-native';
-
-import Colors from '@/constants/Colors';
-import { useColorScheme } from '@/components/useColorScheme';
-import { useClientOnlyValue } from '@/components/useClientOnlyValue';
+import { Ionicons } from '@expo/vector-icons';
+import { Tabs } from 'expo-router';
+import { View } from 'react-native';
 
 export default function TabLayout() {
-  const colorScheme = useColorScheme();
-
   return (
-    <Tabs
-      screenOptions={{
-        tabBarActiveTintColor: Colors[colorScheme].tint,
-        // Disable the static render of the header on web
-        // to prevent a hydration error in React Navigation v6.
-        headerShown: useClientOnlyValue(false, true),
-      }}>
-      <Tabs.Screen
-        name="index"
-        options={{
-          title: 'Tab One',
-          tabBarIcon: ({ color }) => (
-            <SymbolView
-              name={{
-                ios: 'chevron.left.forwardslash.chevron.right',
-                android: 'code',
-                web: 'code',
-              }}
-              tintColor={color}
-              size={28}
-            />
-          ),
-          headerRight: () => (
-            <Link href="/modal" asChild>
-              <Pressable style={{ marginRight: 15 }}>
-                {({ pressed }) => (
-                  <SymbolView
-                    name={{ ios: 'info.circle', android: 'info', web: 'info' }}
-                    size={25}
-                    tintColor={Colors[colorScheme].text}
-                    style={{ opacity: pressed ? 0.5 : 1 }}
-                  />
-                )}
-              </Pressable>
-            </Link>
-          ),
+    <View style={{ flex: 1, backgroundColor: '#09090b' }}>
+      <Tabs
+        screenOptions={{
+          headerShown: false,
+          tabBarStyle: {
+            position: 'absolute',
+            bottom: 24,
+            left: 20,
+            right: 20,
+            backgroundColor: 'rgba(24, 24, 27, 0.95)',
+            borderRadius: 32,
+            borderWidth: 1,
+            borderColor: 'rgba(63, 63, 70, 0.5)',
+            height: 70,
+            paddingBottom: 10,
+            paddingTop: 10,
+            elevation: 10,
+          },
+          tabBarActiveTintColor: '#a3e635',
+          tabBarInactiveTintColor: '#a1a1aa',
+          tabBarLabelStyle: {
+            fontSize: 13,
+            fontWeight: '600',
+          },
         }}
-      />
-      <Tabs.Screen
-        name="two"
-        options={{
-          title: 'Tab Two',
-          tabBarIcon: ({ color }) => (
-            <SymbolView
-              name={{
-                ios: 'chevron.left.forwardslash.chevron.right',
-                android: 'code',
-                web: 'code',
-              }}
-              tintColor={color}
-              size={28}
-            />
-          ),
-        }}
-      />
-    </Tabs>
+      >
+        <Tabs.Screen
+          name="index"
+          options={{
+            title: 'Explorar',
+            tabBarIcon: ({ color, focused }) => (
+              <Ionicons name={focused ? 'compass' : 'compass-outline'} size={26} color={color} />
+            ),
+          }}
+        />
+        <Tabs.Screen
+          name="matches"
+          options={{
+            title: 'Partidos',
+            tabBarIcon: ({ color, focused }) => (
+              <Ionicons name={focused ? 'football' : 'football-outline'} size={26} color={color} />
+            ),
+          }}
+        />
+        <Tabs.Screen
+          name="profile"
+          options={{
+            title: 'Mi Perfil',
+            tabBarIcon: ({ color, focused }) => (
+              <Ionicons name={focused ? 'person' : 'person-outline'} size={26} color={color} />
+            ),
+          }}
+        />
+      </Tabs>
+    </View>
   );
 }
