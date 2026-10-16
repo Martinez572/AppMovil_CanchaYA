@@ -2,29 +2,38 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    KeyboardAvoidingView,
-    Platform,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View
+  ActivityIndicator,
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View
 } from 'react-native';
 import { supabase } from '../../lib/supabase';
 
 export default function LoginScreen() {
   const router = useRouter();
-  
+
+  // Estados del Formulario
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
 
+  // Validar formato de correo
+  const validateEmail = (emailStr: string) => {
+    const regex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return regex.test(emailStr.trim());
+  };
+
   const handleLogin = async () => {
-    if (!email.trim() || !password.trim()) {
+    const cleanEmail = email.trim();
+
+    if (!cleanEmail || !password.trim()) {
       const msg = 'Por favor ingresa tu correo electrónico y contraseña.';
       Platform.OS === 'web' ? window.alert(msg) : Alert.alert('Campos Incompletos', msg);
       return;
@@ -33,31 +42,33 @@ export default function LoginScreen() {
     setLoading(true);
 
     try {
+      // 1. Iniciar sesión en Supabase
       const { data, error } = await supabase.auth.signInWithPassword({
-        email: email.trim(),
+        email: cleanEmail,
         password: password,
       });
 
       if (error) throw error;
 
-      // Navegación segura hacia el inicio
-      if (router.canGoBack()) {
-        router.back();
+      if (data?.session) {
+        // 2. Esperar 100ms para asegurar la escritura del token en la caché del celular
+        setTimeout(() => {
+          router.replace('/(tabs)/profile');
+        }, 100);
       } else {
-        router.replace('/');
+        throw new Error('No se pudo confirmar la sesión.');
       }
     } catch (error: any) {
       console.error('Error al iniciar sesión:', error);
-      const errorMsg = error.message === 'Invalid login credentials' 
-        ? 'Correo o contraseña incorrectos. Verifica tus datos.' 
-        : error.message || 'No se pudo iniciar sesión. Inténtalo de nuevo.';
-      
-      Platform.OS === 'web' ? window.alert(errorMsg) : Alert.alert('Error de Autenticación', errorMsg);
+      const errorMsg = error.message?.includes('Invalid login credentials')
+        ? 'Correo o contraseña incorrectos. Verifica tus datos e inténtalo de nuevo.'
+        : error.message || 'Error de autenticación.';
+
+      Platform.OS === 'web' ? window.alert(errorMsg) : Alert.alert('Error', errorMsg);
     } finally {
       setLoading(false);
     }
   };
-
   return (
     <KeyboardAvoidingView 
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'} 
@@ -65,14 +76,16 @@ export default function LoginScreen() {
     >
       <View style={styles.phoneContainer}>
         
-        {/* Botón para cerrar o regresar */}
-        <TouchableOpacity 
-          style={styles.closeBtn} 
-          onPress={() => router.canGoBack() ? router.back() : router.replace('/')}
-          activeOpacity={0.7}
-        >
-          <Ionicons name="close" size={24} color="#ffffff" />
-        </TouchableOpacity>
+        {/* Cabecera / Botón Cerrar */}
+        <View style={styles.topHeader}>
+          <TouchableOpacity 
+            style={styles.closeBtn} 
+            onPress={() => router.canGoBack() ? router.back() : router.replace('/(tabs)')}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="close" size={24} color="#18181b" />
+          </TouchableOpacity>
+        </View>
 
         <ScrollView 
           contentContainerStyle={styles.scrollContent} 
@@ -80,48 +93,57 @@ export default function LoginScreen() {
           keyboardShouldPersistTaps="handled"
         >
           
-          {/* Tarjeta de Bienvenida / Marca Bento */}
+          {/* BANNER PRINCIPAL BENTO GRID */}
           <View style={styles.headerCard}>
             <View style={styles.logoBadge}>
               <Ionicons name="football" size={36} color="#09090b" />
             </View>
-            <Text style={styles.brandTitle}>Cancha<Text style={{ color: '#a3e635' }}>YA</Text></Text>
-            <Text style={styles.brandSubtitle}>Ingresa a tu cuenta y arma tu equipo en segundos</Text>
+            <Text style={styles.brandTitle}>Cancha<Text style={{ color: '#65a30d' }}>YA</Text></Text>
+            <Text style={styles.brandSubtitle}>Ingresa a tu cuenta para unirte a partidos y completar tus equipos al instante.</Text>
           </View>
 
-          {/* Formulario Estilo Bento */}
+          {/* TARJETA DE FORMULARIO BENTO */}
           <View style={styles.formCard}>
+            
+            {/* Campo: Correo Electrónico */}
             <Text style={styles.inputLabel}>Correo electrónico</Text>
-            <View style={styles.inputContainer}>
-              <Ionicons name="mail-outline" size={22} color="#a1a1aa" style={styles.inputIcon} />
+            <View style={[
+              styles.inputContainer,
+              email.length > 0 && !validateEmail(email) && styles.inputErrorBorder
+            ]}>
+              <Ionicons name="mail-outline" size={22} color="#71717a" style={styles.inputIcon} />
               <TextInput
                 style={styles.input}
                 placeholder="ejemplo@correo.com"
-                placeholderTextColor="#71717a"
+                placeholderTextColor="#a1a1aa"
                 keyboardType="email-address"
                 autoCapitalize="none"
                 value={email}
                 onChangeText={setEmail}
               />
             </View>
+            {email.length > 0 && !validateEmail(email) && (
+              <Text style={styles.errorText}>Ingresa un correo con formato válido</Text>
+            )}
 
+            {/* Campo: Contraseña */}
             <Text style={styles.inputLabel}>Contraseña</Text>
             <View style={styles.inputContainer}>
-              <Ionicons name="lock-closed-outline" size={22} color="#a1a1aa" style={styles.inputIcon} />
+              <Ionicons name="lock-closed-outline" size={22} color="#71717a" style={styles.inputIcon} />
               <TextInput
                 style={styles.input}
-                placeholder="Tu contraseña"
-                placeholderTextColor="#71717a"
+                placeholder="Tu contraseña registrada"
+                placeholderTextColor="#a1a1aa"
                 secureTextEntry={!showPassword}
                 value={password}
                 onChangeText={setPassword}
               />
               <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eyeIcon}>
-                <Ionicons name={showPassword ? "eye-off-outline" : "eye-outline"} size={22} color="#a1a1aa" />
+                <Ionicons name={showPassword ? "eye-off-outline" : "eye-outline"} size={22} color="#71717a" />
               </TouchableOpacity>
             </View>
 
-            {/* Botón Principal en formato Pastilla grande */}
+            {/* BOTÓN PRINCIPAL EN PASTILLA GRANDE */}
             <TouchableOpacity 
               style={[styles.primaryButton, loading && { opacity: 0.7 }]} 
               onPress={handleLogin} 
@@ -137,9 +159,10 @@ export default function LoginScreen() {
                 </>
               )}
             </TouchableOpacity>
+
           </View>
 
-          {/* Enlace hacia Registro */}
+          {/* ENLACE HACIA REGISTRO */}
           <View style={styles.footerRow}>
             <Text style={styles.footerText}>¿Aún no tienes cuenta?</Text>
             <TouchableOpacity onPress={() => router.push('/auth/register')}>
@@ -156,7 +179,7 @@ export default function LoginScreen() {
 const styles = StyleSheet.create({
   container: { 
     flex: 1, 
-    backgroundColor: '#09090b', 
+    backgroundColor: '#f4f4f5', 
     alignItems: 'center', 
     justifyContent: 'center' 
   },
@@ -164,31 +187,35 @@ const styles = StyleSheet.create({
     flex: 1, 
     width: '100%', 
     maxWidth: 480, 
-    paddingTop: 50, 
+    paddingTop: 48, 
     paddingHorizontal: 20 
   },
+  topHeader: {
+    marginBottom: 12
+  },
   closeBtn: { 
-    backgroundColor: '#18181b', 
+    backgroundColor: '#ffffff', 
     width: 44, 
     height: 44, 
     borderRadius: 22, 
     justifyContent: 'center', 
     alignItems: 'center', 
-    marginBottom: 16, 
     borderWidth: 1, 
-    borderColor: '#27272a' 
+    borderColor: '#e4e4e7',
+    elevation: 1
   },
   scrollContent: { 
     paddingBottom: 40 
   },
   headerCard: { 
-    backgroundColor: '#18181b', 
+    backgroundColor: '#ffffff', 
     borderRadius: 28, 
     padding: 24, 
     alignItems: 'center', 
-    marginBottom: 20, 
+    marginBottom: 16, 
     borderWidth: 1, 
-    borderColor: '#27272a' 
+    borderColor: '#e4e4e7',
+    elevation: 2
   },
   logoBadge: { 
     backgroundColor: '#a3e635', 
@@ -200,40 +227,45 @@ const styles = StyleSheet.create({
     marginBottom: 12 
   },
   brandTitle: { 
-    fontSize: 32, 
+    fontSize: 30, 
     fontWeight: 'bold', 
-    color: '#ffffff' 
+    color: '#18181b' 
   },
   brandSubtitle: { 
-    fontSize: 16, 
-    color: '#a1a1aa', 
+    fontSize: 15, 
+    color: '#71717a', 
     marginTop: 6, 
     textAlign: 'center',
-    fontWeight: '500'
+    fontWeight: '500',
+    lineHeight: 22
   },
   formCard: { 
-    backgroundColor: '#18181b', 
+    backgroundColor: '#ffffff', 
     borderRadius: 28, 
     padding: 24, 
     borderWidth: 1, 
-    borderColor: '#27272a' 
+    borderColor: '#e4e4e7',
+    elevation: 2
   },
   inputLabel: { 
     fontSize: 16, 
     fontWeight: '600', 
-    color: '#f4f4f5', 
+    color: '#18181b', 
     marginBottom: 8, 
-    marginTop: 12 
+    marginTop: 10 
   },
   inputContainer: { 
-    backgroundColor: '#27272a', 
+    backgroundColor: '#f4f4f5', 
     borderRadius: 16, 
     flexDirection: 'row', 
     alignItems: 'center', 
     paddingHorizontal: 16, 
     height: 56, 
     borderWidth: 1, 
-    borderColor: '#3f3f46' 
+    borderColor: '#e4e4e7' 
+  },
+  inputErrorBorder: {
+    borderColor: '#ef4444'
   },
   inputIcon: { 
     marginRight: 12 
@@ -241,7 +273,14 @@ const styles = StyleSheet.create({
   input: { 
     flex: 1, 
     fontSize: 16, 
-    color: '#ffffff',
+    color: '#18181b',
+    fontWeight: '500'
+  },
+  errorText: {
+    color: '#ef4444',
+    fontSize: 13,
+    marginTop: 6,
+    marginLeft: 4,
     fontWeight: '500'
   },
   eyeIcon: { 
@@ -255,11 +294,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center', 
     alignItems: 'center', 
     marginTop: 28,
-    shadowColor: '#a3e635',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
-    shadowRadius: 8,
-    elevation: 4
+    elevation: 3
   },
   primaryButtonText: { 
     color: '#09090b', 
@@ -273,11 +308,12 @@ const styles = StyleSheet.create({
     marginTop: 24 
   },
   footerText: { 
-    color: '#a1a1aa', 
-    fontSize: 16 
+    color: '#71717a', 
+    fontSize: 16,
+    fontWeight: '500'
   },
   registerLink: { 
-    color: '#a3e635', 
+    color: '#65a30d', 
     fontSize: 16, 
     fontWeight: 'bold' 
   },
