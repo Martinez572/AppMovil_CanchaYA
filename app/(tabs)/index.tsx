@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 import { useTheme } from '../../context/ThemeContext';
 import { supabase } from '../../lib/supabase';
+import { AIRecommendation, getAILevelRecommendation } from '../../services/aiLevelService';
 
 interface Match {
   id: string;
@@ -31,13 +32,17 @@ export default function HomeScreen() {
   const { colors, t } = useTheme();
 
   const [userName, setUserName] = useState<string | null>(null);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [matches, setMatches] = useState<Match[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [selectedSportFilter, setSelectedSportFilter] = useState('Todos');
 
-  // Filtros dinámicos con traducciones
+  // Estado para la recomendación de IA en tiempo real
+  const [aiData, setAiData] = useState<Record<string, AIRecommendation>>({});
+  const [loadingAi, setLoadingAi] = useState(false);
+
   const sportsFilterList = [
     { id: '0', key: 'Todos', labelKey: 'filterAll', icon: 'grid-outline' },
     { id: '1', key: 'Fútbol', labelKey: 'filterSoccer', icon: 'football' },
@@ -49,11 +54,13 @@ export default function HomeScreen() {
     { id: '7', key: 'Running', labelKey: 'filterRunning', icon: 'walk' },
   ];
 
-  const fetchUserProfile = async () => {
+  const fetchUserProfileAndAI = async () => {
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (session?.user) {
         setIsLoggedIn(true);
+        setCurrentUserId(session.user.id);
+
         const { data: profile } = await supabase
           .from('profiles')
           .select('full_name')
@@ -61,12 +68,21 @@ export default function HomeScreen() {
           .single();
 
         setUserName(profile?.full_name || session.user.user_metadata?.full_name || t('player'));
+
+        // Cargar recomendación de IA real si hay un deporte seleccionado
+        if (selectedSportFilter !== 'Todos') {
+          setLoadingAi(true);
+          const aiResult = await getAILevelRecommendation(session.user.id, selectedSportFilter);
+          setAiData(prev => ({ ...prev, [selectedSportFilter]: aiResult }));
+          setLoadingAi(false);
+        }
       } else {
         setIsLoggedIn(false);
         setUserName(null);
+        setCurrentUserId(null);
       }
     } catch (e) {
-      console.log('Error perfil:', e);
+      console.log('Error al cargar perfil e IA:', e);
     }
   };
 
@@ -99,7 +115,7 @@ export default function HomeScreen() {
         setMatches([]);
       }
     } catch (error: any) {
-      console.error('Error convocatorias:', error);
+      console.error('Error cargando convocatorias:', error);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -108,14 +124,14 @@ export default function HomeScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      fetchUserProfile();
+      fetchUserProfileAndAI();
       fetchMatches();
     }, [selectedSportFilter])
   );
 
   const onRefresh = () => {
     setRefreshing(true);
-    fetchUserProfile();
+    fetchUserProfileAndAI();
     fetchMatches();
   };
 
@@ -137,9 +153,7 @@ export default function HomeScreen() {
   };
 
   const handleJoinMatch = async (matchId: string) => {
-    const { data: { session } } = await supabase.auth.getSession();
-
-    if (!session?.user) {
+    if (!currentUserId) {
       const msg = t('loginRequiredMsg');
       Platform.OS === 'web' ? window.alert(msg) : Alert.alert(t('loginRequiredTitle'), msg, [
         { text: t('cancelBtn'), style: 'cancel' },
@@ -150,7 +164,7 @@ export default function HomeScreen() {
 
     try {
       const { error } = await supabase.from('match_players').insert([
-        { match_id: matchId, user_id: session.user.id, status: 'confirmed' }
+        { match_id: matchId, user_id: currentUserId, status: 'confirmed' }
       ]);
 
       if (error) {
@@ -167,11 +181,13 @@ export default function HomeScreen() {
     }
   };
 
+  const currentAiInfo = selectedSportFilter !== 'Todos' ? aiData[selectedSportFilter] : null;
+
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       <View style={styles.phoneContainer}>
         
-        {/* Cabecera */}
+        {/* Cabecera Bento */}
         <View style={styles.topHeader}>
           <View>
             {isLoggedIn ? (
@@ -191,7 +207,7 @@ export default function HomeScreen() {
 
           {isLoggedIn ? (
             <TouchableOpacity onPress={() => router.push('/(tabs)/profile')} activeOpacity={0.8}>
-              <Ionicons name="person-circle-outline" size={40} color={colors.textPrimary} />
+              <Ionicons name="person-circle-outline" size={42} color={colors.textPrimary} />
             </TouchableOpacity>
           ) : (
             <TouchableOpacity 
@@ -204,7 +220,7 @@ export default function HomeScreen() {
           )}
         </View>
 
-        {/* Filtros Traducidos */}
+        {/* Filtros Por Deporte */}
         <View style={{ marginBottom: 16 }}>
           <ScrollView horizontal showsHorizontalScrollIndicator={false}>
             {sportsFilterList.map((sport) => {
@@ -239,7 +255,35 @@ export default function HomeScreen() {
           </ScrollView>
         </View>
 
-        {/* Lista de Partidos */}
+        {/* BANNER REAL DE CANCHAYA IA */}
+        {selectedSportFilter !== 'Todos' && isLoggedIn && (
+          <View style={[styles.aiBannerCard, { backgroundColor: colors.card, borderColor: colors.cardBorder }]}>
+            <View style={styles.aiBadgeHeader}>
+              <View style={[styles.aiPill, { backgroundColor: colors.accent }]}>
+                <Ionicons name="sparkles" size={14} color="#09090b" style={{ marginRight: 4 }} />
+                <Text style={styles.aiPillText}>CanchaYa LevelMatch AI</Text>
+              </View>
+              {loadingAi && <ActivityIndicator size="small" color={colors.accent} />}
+            </View>
+
+            {currentAiInfo ? (
+              <>
+                <Text style={[styles.aiTitle, { color: colors.textPrimary }]}>
+                  {currentAiInfo.badgeText}
+                </Text>
+                <Text style={[styles.aiReason, { color: colors.textSecondary }]}>
+                  "{currentAiInfo.reason}"
+                </Text>
+              </>
+            ) : (
+              <Text style={[styles.aiReason, { color: colors.textSecondary }]}>
+                Analizando tu historial de juego en {selectedSportFilter}...
+              </Text>
+            )}
+          </View>
+        )}
+
+        {/* Convocatorias */}
         <ScrollView 
           contentContainerStyle={{ paddingBottom: 100 }} 
           showsVerticalScrollIndicator={false}
@@ -282,7 +326,12 @@ export default function HomeScreen() {
               const isFull = spotsLeft <= 0;
 
               return (
-                <View key={item.id} style={[styles.matchBentoCard, { backgroundColor: colors.card, borderColor: colors.cardBorder }]}>
+                <TouchableOpacity 
+                  key={item.id} 
+                  style={[styles.matchBentoCard, { backgroundColor: colors.card, borderColor: colors.cardBorder }]}
+                  onPress={() => router.push(`/match/${item.id}`)}
+                  activeOpacity={0.9}
+                >
                   <View style={styles.cardTopRow}>
                     <View style={[styles.sportTag, { backgroundColor: colors.accent }]}>
                       <Ionicons name="trophy-outline" size={16} color="#09090b" style={{ marginRight: 6 }} />
@@ -332,12 +381,13 @@ export default function HomeScreen() {
                       {isFull ? t('matchFull') : t('joinMatch')}
                     </Text>
                   </TouchableOpacity>
-                </View>
+                </TouchableOpacity>
               );
             })
           )}
         </ScrollView>
 
+        {/* Botón Flotante Verde Neón */}
         <TouchableOpacity 
           style={[styles.fabButton, { backgroundColor: colors.accent }]}
           onPress={() => router.push('/match/create')}
@@ -361,6 +411,12 @@ const styles = StyleSheet.create({
   loginPillText: { color: '#09090b', fontWeight: 'bold', fontSize: 15 },
   filterChip: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 10, borderRadius: 9999, marginRight: 8, borderWidth: 1 },
   filterChipText: { fontSize: 14, fontWeight: '600' },
+  aiBannerCard: { borderRadius: 24, padding: 16, borderWidth: 1, marginBottom: 16, elevation: 1 },
+  aiBadgeHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
+  aiPill: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 9999 },
+  aiPillText: { fontSize: 12, fontWeight: 'bold', color: '#09090b' },
+  aiTitle: { fontSize: 16, fontWeight: 'bold', marginBottom: 2 },
+  aiReason: { fontSize: 13, fontStyle: 'italic', lineHeight: 18 },
   sectionHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
   sectionTitle: { fontSize: 20, fontWeight: 'bold' },
   matchCountBadge: { fontSize: 13, fontWeight: 'bold', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8, borderWidth: 1 },
