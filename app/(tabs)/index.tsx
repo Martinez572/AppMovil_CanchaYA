@@ -285,7 +285,7 @@ export default function HomeScreen() {
 
         {/* Convocatorias */}
         <ScrollView 
-          contentContainerStyle={{ paddingBottom: 100 }} 
+          contentContainerStyle={{ paddingBottom: 130 }} 
           showsVerticalScrollIndicator={false}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />}
         >
@@ -440,5 +440,5 @@ const styles = StyleSheet.create({
   notesText: { fontSize: 14, fontStyle: 'italic' },
   joinBtn: { height: 50, borderRadius: 9999, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', marginTop: 10 },
   joinBtnText: { color: '#09090b', fontWeight: 'bold', fontSize: 16 },
-  fabButton: { position: 'absolute', bottom: 24, right: 20, width: 60, height: 60, borderRadius: 30, justifyContent: 'center', alignItems: 'center', elevation: 6 },
+  fabButton: { position: 'absolute', bottom: 150, right: 20, width: 60, height: 60, borderRadius: 30, justifyContent: 'center', alignItems: 'center', elevation: 6 },
 });
