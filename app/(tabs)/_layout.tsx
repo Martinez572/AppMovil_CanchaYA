@@ -1,110 +1,150 @@
 import { Ionicons } from '@expo/vector-icons';
-import { Tabs } from 'expo-router';
+import { Tabs, useRouter } from 'expo-router';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../context/ThemeContext';
 
-export default function TabLayout() {
-  const { colors, t, isDark } = useTheme();
-  const insets = useSafeAreaInsets();
+const TAB_ITEMS: Record<
+  string,
+  {
+    label: string;
+    path: string;
+    iconActive: keyof typeof Ionicons.glyphMap;
+    iconInactive: keyof typeof Ionicons.glyphMap;
+  }
+> = {
+  index: {
+    label: 'Explorar',
+    path: '/(tabs)',
+    iconActive: 'compass',
+    iconInactive: 'compass-outline',
+  },
+  matches: {
+    label: 'Partidos',
+    path: '/(tabs)/matches',
+    iconActive: 'football',
+    iconInactive: 'football-outline',
+  },
+  chat: {
+    label: 'Chat',
+    path: '/(tabs)/chat',
+    iconActive: 'chatbubbles',
+    iconInactive: 'chatbubbles-outline',
+  },
+  profile: {
+    label: 'Perfil',
+    path: '/(tabs)/profile',
+    iconActive: 'person',
+    iconInactive: 'person-outline',
+  },
+};
 
-  // Calculamos el espacio inferior real del dispositivo (botones de Android o barra de gestos)
-  // Si insets.bottom es 0 (algunos dispositivos Android con botones físicos/navegación), damos 16px mínimos
-  const bottomSpacing = Math.max(insets.bottom, 16) + 8;
+function CustomFloatingTabBar({ state }: any) {
+  const { colors, isDark } = useTheme();
+  const insets = useSafeAreaInsets();
+  const router = useRouter();
+  const bottomSpacing = Math.max(insets.bottom, 12) + 8;
 
   return (
-    <Tabs
-      screenOptions={{
-        headerShown: false,
-        tabBarActiveTintColor: '#09090b', // Contraste máximo sobre la pastilla verde neón
-        tabBarInactiveTintColor: colors.textSecondary,
-        tabBarStyle: {
-          position: 'absolute',
+    <View
+      style={[
+        styles.floatingContainer,
+        {
           bottom: bottomSpacing,
-          left: 16,
-          right: 16,
-          height: 74, // Altura generosa para fácil pulsación (16 a 50+ años)
-          borderRadius: 9999, // Estilo cápsula/pastilla Bento Grid
-          backgroundColor: isDark ? 'rgba(24, 24, 27, 0.96)' : 'rgba(255, 255, 255, 0.96)',
-          borderTopWidth: 1,
-          borderWidth: 1,
+          backgroundColor: isDark
+            ? 'rgba(24, 24, 27, 0.96)'
+            : 'rgba(255, 255, 255, 0.96)',
           borderColor: colors.cardBorder,
-          paddingBottom: 8,
-          paddingTop: 8,
-          paddingHorizontal: 8,
-          elevation: 10,
-          shadowColor: '#000',
-          shadowOffset: { width: 0, height: 6 },
-          shadowOpacity: isDark ? 0.4 : 0.12,
-          shadowRadius: 12,
+          shadowOpacity: isDark ? 0.45 : 0.12,
         },
-        tabBarItemStyle: {
-          borderRadius: 9999,
-          marginHorizontal: 2,
-          paddingVertical: 4,
-        },
-        tabBarActiveBackgroundColor: colors.accent, // Verde Neón (#a3e635) activo
-        tabBarLabelStyle: {
-          fontSize: 12,
-          fontWeight: '700',
-          marginTop: 2,
-        },
-      }}
+      ]}
     >
-      <Tabs.Screen
-        name="index"
-        options={{
-          title: t('tabExplore') || 'Explorar',
-          tabBarIcon: ({ focused, color }) => (
-            <Ionicons 
-              name={focused ? 'compass' : 'compass-outline'} 
-              size={25} 
-              color={focused ? '#09090b' : color} 
-            />
-          ),
-        }}
-      />
+      {state.routes.map((route: any, index: number) => {
+        const config = TAB_ITEMS[route.name];
+        if (!config) return null;
 
-      <Tabs.Screen
-        name="matches"
-        options={{
-          title: t('tabMatches') || 'Mis Partidos',
-          tabBarIcon: ({ focused, color }) => (
-            <Ionicons 
-              name={focused ? 'football' : 'football-outline'} 
-              size={25} 
-              color={focused ? '#09090b' : color} 
-            />
-          ),
-        }}
-      />
+        const isFocused = state.index === index;
 
-      <Tabs.Screen
-        name="chat"
-        options={{
-          title: t('tabChat') || 'Mensajes',
-          tabBarIcon: ({ focused, color }) => (
-            <Ionicons 
-              name={focused ? 'chatbubbles' : 'chatbubbles-outline'} 
-              size={25} 
-              color={focused ? '#09090b' : color} 
-            />
-          ),
-        }}
-      />
+        const handlePress = () => {
+          if (!isFocused) {
+            router.navigate(config.path as any);
+          }
+        };
 
-      <Tabs.Screen
-        name="profile"
-        options={{
-          title: t('tabProfile') || 'Perfil',
-          tabBarIcon: ({ focused, color }) => (
-            <Ionicons 
-              name={focused ? 'person' : 'person-outline'} 
-              size={25} 
-              color={focused ? '#09090b' : color} 
+        return (
+          <Pressable
+            key={route.key}
+            onPress={handlePress}
+            accessibilityRole="button"
+            accessibilityState={isFocused ? { selected: true } : {}}
+            style={[
+              styles.tabButton,
+              isFocused && { backgroundColor: colors.accent },
+            ]}
+          >
+            <Ionicons
+              name={isFocused ? config.iconActive : config.iconInactive}
+              size={24}
+              color={isFocused ? '#09090b' : colors.textPrimary}
             />
-          ),
-        }}
-      />
+            <Text
+              numberOfLines={1}
+              style={[
+                styles.tabLabel,
+                { color: isFocused ? '#09090b' : colors.textPrimary },
+                isFocused && { fontWeight: '800' },
+              ]}
+            >
+              {config.label}
+            </Text>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
+export default function TabLayout() {
+  return (
+    <Tabs
+      screenOptions={{ headerShown: false }}
+      tabBar={(props) => <CustomFloatingTabBar {...props} />}
+    >
+      <Tabs.Screen name="index" />
+      <Tabs.Screen name="matches" />
+      <Tabs.Screen name="chat" />
+      <Tabs.Screen name="profile" />
     </Tabs>
   );
 }
+
+const styles = StyleSheet.create({
+  floatingContainer: {
+    position: 'absolute',
+    left: 16,
+    right: 16,
+    height: 68,
+    borderRadius: 9999,
+    borderWidth: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 6,
+    elevation: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowRadius: 12,
+  },
+  tabButton: {
+    flex: 1,
+    height: '100%',
+    borderRadius: 9999,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  tabLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    marginTop: 2,
+  },
+});
