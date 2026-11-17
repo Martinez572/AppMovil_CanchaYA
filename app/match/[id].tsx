@@ -1,16 +1,13 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  KeyboardAvoidingView,
-  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
@@ -27,21 +24,11 @@ interface Player {
   };
 }
 
-interface ChatMessage {
-  id: string;
-  match_id: string;
-  sender_id: string;
-  sender_name: string;
-  content: string;
-  created_at: string;
-}
-
 export default function MatchDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
-  const scrollViewRef = useRef<ScrollView>(null);
 
   const [match, setMatch] = useState<any>(null);
   const [players, setPlayers] = useState<Player[]>([]);
@@ -49,13 +36,7 @@ export default function MatchDetailScreen() {
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
-  const [currentUserName, setCurrentUserName] = useState<string>('Jugador');
-
-  // Estados para Mapa y Chat en Vivo
   const [mapVisible, setMapVisible] = useState(false);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [newMessage, setNewMessage] = useState('');
-  const [sendingMsg, setSendingMsg] = useState(false);
 
   const fetchMatchDetails = async () => {
     try {
@@ -66,18 +47,6 @@ export default function MatchDetailScreen() {
       const uid = session?.user?.id || null;
       setCurrentUserId(uid);
 
-      if (uid) {
-        const { data: myProfile } = await supabase
-          .from('profiles')
-          .select('full_name')
-          .eq('id', uid)
-          .single();
-        if (myProfile?.full_name) {
-          setCurrentUserName(myProfile.full_name);
-        }
-      }
-
-      // Obtener datos del partido
       const { data: matchData, error: matchError } = await supabase
         .from('matches')
         .select(
@@ -92,7 +61,6 @@ export default function MatchDetailScreen() {
       if (matchError) throw matchError;
       setMatch(matchData);
 
-      // Obtener lista de jugadores unidos
       const { data: playerData, error: playerError } = await supabase
         .from('match_players')
         .select(
@@ -124,84 +92,24 @@ export default function MatchDetailScreen() {
     }
   };
 
-  // Cargar historial de mensajes del chat
-  const fetchMessages = async () => {
-    if (!id) return;
-    const { data, error } = await supabase
-      .from('match_messages')
-      .select('*')
-      .eq('match_id', id)
-      .order('created_at', { ascending: true });
-
-    if (!error && data) {
-      setMessages(data);
-    }
-  };
-
   useEffect(() => {
     fetchMatchDetails();
   }, [id]);
 
-  // Suscripción en tiempo real a los mensajes de este partido
-  useEffect(() => {
-    if (!id) return;
-
-    fetchMessages();
-
-    const channel = supabase
-      .channel(`match-chat-${id}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'match_messages',
-          filter: `match_id=eq.${id}`,
-        },
-        (payload) => {
-          const incoming = payload.new as ChatMessage;
-          setMessages((prev) => {
-            if (prev.some((m) => m.id === incoming.id)) return prev;
-            return [...prev, incoming];
-          });
-          setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: true }), 100);
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [id]);
-
-  // Enviar mensaje directo al organizador
-  const handleSendMessage = async () => {
-    const trimmed = newMessage.trim();
-    if (!trimmed || sendingMsg) return;
-
+  // Redirige a la pestaña de Chat abriendo directamente la conversación de este partido
+  const handleOpenChatWithCreator = () => {
     if (!currentUserId) {
-      Alert.alert('Inicia Sesión', 'Debes iniciar sesión para escribirle al creador.');
-      router.push('/auth/login');
+      Alert.alert('Inicia Sesión', 'Debes iniciar sesión para escribirle al creador.', [
+        { text: 'Cancelar', style: 'cancel' },
+        { text: 'Entrar', onPress: () => router.push('/auth/login') },
+      ]);
       return;
     }
 
-    setSendingMsg(true);
-    setNewMessage('');
-
-    const { error } = await supabase.from('match_messages').insert([
-      {
-        match_id: id,
-        sender_id: currentUserId,
-        sender_name: currentUserName,
-        content: trimmed,
-      },
-    ]);
-
-    if (error) {
-      Alert.alert('Error', 'No se pudo enviar el mensaje. Intenta nuevamente.');
-      setNewMessage(trimmed);
-    }
-    setSendingMsg(false);
+    router.push({
+      pathname: '/(tabs)/chat',
+      params: { matchId: id },
+    });
   };
 
   const handleToggleJoin = async () => {
@@ -215,7 +123,6 @@ export default function MatchDetailScreen() {
 
     try {
       if (isJoined) {
-        // Salir del partido
         const { error } = await supabase
           .from('match_players')
           .delete()
@@ -224,7 +131,6 @@ export default function MatchDetailScreen() {
 
         if (error) throw error;
       } else {
-        // Unirse al partido
         const { error } = await supabase
           .from('match_players')
           .insert([{ match_id: id, user_id: currentUserId, status: 'confirmed' }]);
@@ -240,7 +146,6 @@ export default function MatchDetailScreen() {
     }
   };
 
-  // Extraer coordenadas reales desde match.latitude/longitude o desde el texto "Punto (lat, lng)"
   const getCoordinates = () => {
     if (match?.latitude && match?.longitude) {
       return {
@@ -255,7 +160,7 @@ export default function MatchDetailScreen() {
         longitude: parseFloat(coordMatch[2]),
       };
     }
-    return { latitude: 1.2136, longitude: -77.2811 }; // Pasto por defecto
+    return { latitude: 1.2136, longitude: -77.2811 };
   };
 
   if (loading) {
@@ -291,10 +196,7 @@ export default function MatchDetailScreen() {
   const displayPlaceName = isRawPoint ? 'Ubicación marcada en el mapa' : match.location_name;
 
   return (
-    <KeyboardAvoidingView
-      style={[styles.container, { backgroundColor: colors.background }]}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
       <View style={[styles.phoneContainer, { paddingTop: Math.max(insets.top, 20) + 12 }]}>
         {/* Cabecera */}
         <View style={styles.topHeader}>
@@ -312,11 +214,7 @@ export default function MatchDetailScreen() {
           </Text>
         </View>
 
-        <ScrollView
-          ref={scrollViewRef}
-          showsVerticalScrollIndicator={false}
-          contentContainerStyle={{ paddingBottom: 170 }}
-        >
+        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 155 }}>
           {/* Tarjeta Principal Bento */}
           <View
             style={[
@@ -354,7 +252,7 @@ export default function MatchDetailScreen() {
               </View>
             </View>
 
-            {/* Botón Bento Interactivo para abrir el Mapa */}
+            {/* Botón Bento para abrir el Mapa */}
             <Pressable
               onPress={() => setMapVisible(true)}
               style={[
@@ -413,60 +311,21 @@ export default function MatchDetailScreen() {
                 </Text>
               </View>
             ) : null}
-          </View>
 
-          {/* Tarjeta Bento de Chat Directo con el Creador */}
-          <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
-            Chat con el Creador y Equipo
-          </Text>
-
-          <View
-            style={[
-              styles.chatCard,
-              { backgroundColor: colors.card, borderColor: colors.cardBorder },
-            ]}
-          >
-            {messages.length === 0 ? (
-              <Text style={[styles.emptyChatText, { color: colors.textSecondary }]}>
-                ¿Tienes dudas sobre la cancha o la hora? Escríbele un mensaje directo al organizador aquí abajo.
+            {/* Botón directo hacia la sección de Chat */}
+            <TouchableOpacity
+              onPress={handleOpenChatWithCreator}
+              style={[
+                styles.chatCreatorPillBtn,
+                { backgroundColor: colors.inputBg, borderColor: colors.cardBorder },
+              ]}
+              activeOpacity={0.85}
+            >
+              <Ionicons name="chatbubbles" size={22} color={colors.accentDark} />
+              <Text style={[styles.chatCreatorPillText, { color: colors.textPrimary }]}>
+                Escribirle al creador
               </Text>
-            ) : (
-              <View style={styles.messagesList}>
-                {messages.map((msg) => {
-                  const isMine = msg.sender_id === currentUserId;
-                  return (
-                    <View
-                      key={msg.id}
-                      style={[
-                        styles.messageBubble,
-                        isMine
-                          ? { alignSelf: 'flex-end', backgroundColor: colors.accent }
-                          : { alignSelf: 'flex-start', backgroundColor: colors.inputBg },
-                      ]}
-                    >
-                      {!isMine && (
-                        <Text
-                          style={[
-                            styles.senderName,
-                            { color: colors.accentDark },
-                          ]}
-                        >
-                          {msg.sender_name}
-                        </Text>
-                      )}
-                      <Text
-                        style={[
-                          styles.messageText,
-                          { color: isMine ? '#09090b' : colors.textPrimary },
-                        ]}
-                      >
-                        {msg.content}
-                      </Text>
-                    </View>
-                  );
-                })}
-              </View>
-            )}
+            </TouchableOpacity>
           </View>
 
           {/* Lista de Jugadores Confirmados */}
@@ -509,50 +368,17 @@ export default function MatchDetailScreen() {
           </View>
         </ScrollView>
 
-        {/* Barra Inferior Fija: Caja para escribir mensaje + Botón Unirse */}
+        {/* Botón Flotante Principal para Unirse / Salirse */}
         <View
           style={[
             styles.bottomBar,
             {
               backgroundColor: colors.background,
               borderTopColor: colors.cardBorder,
-              paddingBottom: Math.max(insets.bottom, 12),
+              paddingBottom: Math.max(insets.bottom, 16),
             },
           ]}
         >
-          <View style={styles.chatInputRow}>
-            <TextInput
-              value={newMessage}
-              onChangeText={setNewMessage}
-              placeholder="Escribe al creador..."
-              placeholderTextColor={colors.textSecondary}
-              style={[
-                styles.chatInput,
-                {
-                  backgroundColor: colors.inputBg,
-                  color: colors.textPrimary,
-                  borderColor: colors.cardBorder,
-                },
-              ]}
-            />
-            <TouchableOpacity
-              onPress={handleSendMessage}
-              disabled={sendingMsg || !newMessage.trim()}
-              style={[
-                styles.sendIconBtn,
-                {
-                  backgroundColor: newMessage.trim() ? colors.accent : colors.inputBg,
-                },
-              ]}
-            >
-              <Ionicons
-                name="send"
-                size={20}
-                color={newMessage.trim() ? '#09090b' : colors.textSecondary}
-              />
-            </TouchableOpacity>
-          </View>
-
           <TouchableOpacity
             style={[
               styles.actionPillBtn,
@@ -583,7 +409,7 @@ export default function MatchDetailScreen() {
         </View>
       </View>
 
-      {/* Modal de Ubicación con el Mapa */}
+      {/* Modal con el Mapa Real */}
       <MatchLocationModal
         visible={mapVisible}
         onClose={() => setMapVisible(false)}
@@ -592,7 +418,7 @@ export default function MatchDetailScreen() {
         sportName={match.sport}
         placeLabel={displayPlaceName}
       />
-    </KeyboardAvoidingView>
+    </View>
   );
 }
 
@@ -647,20 +473,20 @@ const styles = StyleSheet.create({
   locationActionSub: { fontSize: 15, marginTop: 2 },
   infoRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
   infoText: { fontSize: 16, fontWeight: '600' },
-  notesBox: { borderRadius: 16, padding: 14, marginTop: 8 },
+  notesBox: { borderRadius: 16, padding: 14, marginTop: 8, marginBottom: 12 },
   notesText: { fontSize: 16, fontStyle: 'italic' },
-  sectionTitle: { fontSize: 18, fontWeight: 'bold', marginBottom: 12 },
-  chatCard: { borderRadius: 24, padding: 16, borderWidth: 1, marginBottom: 20 },
-  emptyChatText: { fontSize: 16, textAlign: 'center', paddingVertical: 12 },
-  messagesList: { gap: 10 },
-  messageBubble: {
-    maxWidth: '82%',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 20,
+  chatCreatorPillBtn: {
+    height: 52,
+    borderRadius: 9999,
+    borderWidth: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    marginTop: 8,
   },
-  senderName: { fontSize: 13, fontWeight: 'bold', marginBottom: 2 },
-  messageText: { fontSize: 16, fontWeight: '500' },
+  chatCreatorPillText: { fontSize: 16, fontWeight: 'bold' },
+  sectionTitle: { fontSize: 18, fontWeight: 'bold', marginBottom: 12 },
   playersCard: { borderRadius: 24, paddingHorizontal: 16, borderWidth: 1, marginBottom: 20 },
   playerItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: 14 },
   playerAvatar: {
@@ -682,23 +508,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 12,
     borderTopWidth: 1,
-    gap: 10,
-  },
-  chatInputRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  chatInput: {
-    flex: 1,
-    height: 48,
-    borderRadius: 9999,
-    paddingHorizontal: 18,
-    fontSize: 16,
-    borderWidth: 1,
-  },
-  sendIconBtn: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    justifyContent: 'center',
-    alignItems: 'center',
   },
   actionPillBtn: {
     height: 56,
