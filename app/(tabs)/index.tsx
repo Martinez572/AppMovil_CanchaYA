@@ -3,15 +3,14 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
-  Platform,
   RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
-  View
+  View,
 } from 'react-native';
+import { MatchLocationModal } from '../../components/MatchLocationModal';
 import { useTheme } from '../../context/ThemeContext';
 import { supabase } from '../../lib/supabase';
 import { AIRecommendation, getAILevelRecommendation } from '../../services/aiLevelService';
@@ -20,6 +19,8 @@ interface Match {
   id: string;
   sport: string;
   location_name: string;
+  latitude?: number | null;
+  longitude?: number | null;
   date_time: string;
   total_players_needed: number;
   joined_players_count: number;
@@ -32,7 +33,6 @@ export default function HomeScreen() {
   const { colors, t } = useTheme();
 
   const [userName, setUserName] = useState<string | null>(null);
-  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [matches, setMatches] = useState<Match[]>([]);
   const [loading, setLoading] = useState(true);
@@ -42,6 +42,9 @@ export default function HomeScreen() {
   // Estado para la recomendación de IA en tiempo real
   const [aiData, setAiData] = useState<Record<string, AIRecommendation>>({});
   const [loadingAi, setLoadingAi] = useState(false);
+
+  // Estado para abrir el modal del mapa desde cualquier tarjeta
+  const [selectedLocationMatch, setSelectedLocationMatch] = useState<Match | null>(null);
 
   const sportsFilterList = [
     { id: '0', key: 'Todos', labelKey: 'filterAll', icon: 'grid-outline' },
@@ -56,10 +59,11 @@ export default function HomeScreen() {
 
   const fetchUserProfileAndAI = async () => {
     try {
-      const { data: { session } } = await supabase.auth.getSession();
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
       if (session?.user) {
         setIsLoggedIn(true);
-        setCurrentUserId(session.user.id);
 
         const { data: profile } = await supabase
           .from('profiles')
@@ -73,13 +77,12 @@ export default function HomeScreen() {
         if (selectedSportFilter !== 'Todos') {
           setLoadingAi(true);
           const aiResult = await getAILevelRecommendation(session.user.id, selectedSportFilter);
-          setAiData(prev => ({ ...prev, [selectedSportFilter]: aiResult }));
+          setAiData((prev) => ({ ...prev, [selectedSportFilter]: aiResult }));
           setLoadingAi(false);
         }
       } else {
         setIsLoggedIn(false);
         setUserName(null);
-        setCurrentUserId(null);
       }
     } catch (e) {
       console.log('Error al cargar perfil e IA:', e);
@@ -90,11 +93,13 @@ export default function HomeScreen() {
     try {
       let query = supabase
         .from('matches')
-        .select(`
+        .select(
+          `
           id, sport, location_name, date_time,
           total_players_needed, joined_players_count, notes, status,
           profiles:creator_id ( full_name )
-        `)
+        `
+        )
         .eq('status', 'open')
         .order('date_time', { ascending: true });
 
@@ -140,7 +145,7 @@ export default function HomeScreen() {
       const d = new Date(isoString);
       const days = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
       const months = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
-      
+
       let hours = d.getHours();
       const minutes = d.getMinutes().toString().padStart(2, '0');
       const ampm = hours >= 12 ? 'PM' : 'AM';
@@ -152,65 +157,60 @@ export default function HomeScreen() {
     }
   };
 
-  const handleJoinMatch = async (matchId: string) => {
-    if (!currentUserId) {
-      const msg = t('loginRequiredMsg');
-      Platform.OS === 'web' ? window.alert(msg) : Alert.alert(t('loginRequiredTitle'), msg, [
-        { text: t('cancelBtn'), style: 'cancel' },
-        { text: t('enter'), onPress: () => router.push('/auth/login') }
-      ]);
-      return;
+  // Extraer coordenadas reales desde campos numéricos o desde el texto "Punto (lat, lng)"
+  const extractCoordinates = (matchItem: Match | null) => {
+    if (matchItem?.latitude && matchItem?.longitude) {
+      return {
+        latitude: Number(matchItem.latitude),
+        longitude: Number(matchItem.longitude),
+      };
     }
-
-    try {
-      const { error } = await supabase.from('match_players').insert([
-        { match_id: matchId, user_id: currentUserId, status: 'confirmed' }
-      ]);
-
-      if (error) {
-        if (error.code === '23505') throw new Error(t('alreadyJoined'));
-        throw error;
-      }
-
-      const okMsg = t('joinSuccess');
-      Platform.OS === 'web' ? window.alert(okMsg) : Alert.alert('OK', okMsg);
-      fetchMatches();
-    } catch (err: any) {
-      const errorText = err.message || 'Error';
-      Platform.OS === 'web' ? window.alert(errorText) : Alert.alert('Atención', errorText);
+    const coordMatch = matchItem?.location_name?.match(/\(([-\d.]+),\s*([-\d.]+)\)/);
+    if (coordMatch) {
+      return {
+        latitude: parseFloat(coordMatch[1]),
+        longitude: parseFloat(coordMatch[2]),
+      };
     }
+    return { latitude: 1.2136, longitude: -77.2811 }; // Pasto por defecto
   };
 
   const currentAiInfo = selectedSportFilter !== 'Todos' ? aiData[selectedSportFilter] : null;
+  const selectedCoords = extractCoordinates(selectedLocationMatch);
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       <View style={styles.phoneContainer}>
-        
         {/* Cabecera Bento */}
         <View style={styles.topHeader}>
           <View>
             {isLoggedIn ? (
               <>
-                <Text style={[styles.greetingSubtitle, { color: colors.textSecondary }]}>{t('welcome')}</Text>
-                <Text style={[styles.greetingTitle, { color: colors.textPrimary }]}>{userName || t('player')}</Text>
+                <Text style={[styles.greetingSubtitle, { color: colors.textSecondary }]}>
+                  {t('welcome')}
+                </Text>
+                <Text style={[styles.greetingTitle, { color: colors.textPrimary }]}>
+                  {userName || t('player')}
+                </Text>
               </>
             ) : (
               <>
                 <Text style={[styles.greetingTitle, { color: colors.textPrimary }]}>
                   Cancha<Text style={{ color: colors.accentDark }}>YA</Text>
                 </Text>
-                <Text style={[styles.greetingSubtitle, { color: colors.textSecondary }]}>{t('findMatches')}</Text>
+                <Text style={[styles.greetingSubtitle, { color: colors.textSecondary }]}>
+                  {t('findMatches')}
+                </Text>
               </>
             )}
           </View>
 
           {isLoggedIn ? (
             <TouchableOpacity onPress={() => router.push('/(tabs)/profile')} activeOpacity={0.8}>
-              <Ionicons name="person-circle-outline" size={42} color={colors.textPrimary} />
+              <Ionicons name="person-circle-outline" size={44} color={colors.textPrimary} />
             </TouchableOpacity>
           ) : (
-            <TouchableOpacity 
+            <TouchableOpacity
               style={[styles.loginPillBtn, { backgroundColor: colors.accent }]}
               onPress={() => router.push('/auth/login')}
               activeOpacity={0.85}
@@ -229,24 +229,26 @@ export default function HomeScreen() {
                 <TouchableOpacity
                   key={sport.id}
                   style={[
-                    styles.filterChip, 
+                    styles.filterChip,
                     { backgroundColor: colors.card, borderColor: colors.cardBorder },
-                    isSelected && { backgroundColor: colors.accent, borderColor: colors.accent }
+                    isSelected && { backgroundColor: colors.accent, borderColor: colors.accent },
                   ]}
                   onPress={() => setSelectedSportFilter(sport.key)}
                   activeOpacity={0.8}
                 >
-                  <Ionicons 
-                    name={sport.icon as any} 
-                    size={18} 
-                    color={isSelected ? '#09090b' : colors.textSecondary} 
-                    style={{ marginRight: 6 }} 
+                  <Ionicons
+                    name={sport.icon as any}
+                    size={18}
+                    color={isSelected ? '#09090b' : colors.textPrimary}
+                    style={{ marginRight: 6 }}
                   />
-                  <Text style={[
-                    styles.filterChipText, 
-                    { color: colors.textSecondary },
-                    isSelected && { color: '#09090b', fontWeight: 'bold' }
-                  ]}>
+                  <Text
+                    style={[
+                      styles.filterChipText,
+                      { color: colors.textPrimary },
+                      isSelected && { color: '#09090b', fontWeight: 'bold' },
+                    ]}
+                  >
                     {t(sport.labelKey)}
                   </Text>
                 </TouchableOpacity>
@@ -257,7 +259,12 @@ export default function HomeScreen() {
 
         {/* BANNER REAL DE CANCHAYA IA */}
         {selectedSportFilter !== 'Todos' && isLoggedIn && (
-          <View style={[styles.aiBannerCard, { backgroundColor: colors.card, borderColor: colors.cardBorder }]}>
+          <View
+            style={[
+              styles.aiBannerCard,
+              { backgroundColor: colors.card, borderColor: colors.cardBorder },
+            ]}
+          >
             <View style={styles.aiBadgeHeader}>
               <View style={[styles.aiPill, { backgroundColor: colors.accent }]}>
                 <Ionicons name="sparkles" size={14} color="#09090b" style={{ marginRight: 4 }} />
@@ -284,16 +291,27 @@ export default function HomeScreen() {
         )}
 
         {/* Convocatorias */}
-        <ScrollView 
-          contentContainerStyle={{ paddingBottom: 130 }} 
+        <ScrollView
+          contentContainerStyle={{ paddingBottom: 140 }}
           showsVerticalScrollIndicator={false}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />
+          }
         >
           <View style={styles.sectionHeaderRow}>
             <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
               {t('availableMatches')}
             </Text>
-            <Text style={[styles.matchCountBadge, { backgroundColor: colors.card, color: colors.accentDark, borderColor: colors.cardBorder }]}>
+            <Text
+              style={[
+                styles.matchCountBadge,
+                {
+                  backgroundColor: colors.card,
+                  color: colors.accentDark,
+                  borderColor: colors.cardBorder,
+                },
+              ]}
+            >
               {matches.length} {t('activeMatches')}
             </Text>
           </View>
@@ -301,22 +319,31 @@ export default function HomeScreen() {
           {loading ? (
             <View style={styles.loadingBox}>
               <ActivityIndicator size="large" color={colors.accent} />
-              <Text style={{ color: colors.textSecondary, marginTop: 10 }}>{t('loadingMatches')}</Text>
+              <Text style={{ color: colors.textPrimary, marginTop: 10, fontSize: 16 }}>
+                {t('loadingMatches')}
+              </Text>
             </View>
           ) : matches.length === 0 ? (
-            <View style={[styles.emptyCard, { backgroundColor: colors.card, borderColor: colors.cardBorder }]}>
+            <View
+              style={[
+                styles.emptyCard,
+                { backgroundColor: colors.card, borderColor: colors.cardBorder },
+              ]}
+            >
               <Ionicons name="calendar-clear-outline" size={48} color={colors.textSecondary} />
-              <Text style={[styles.emptyTitle, { color: colors.textPrimary }]}>{t('noMatchesTitle')}</Text>
+              <Text style={[styles.emptyTitle, { color: colors.textPrimary }]}>
+                {t('noMatchesTitle')}
+              </Text>
               <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>
                 {selectedSportFilter === 'Todos' ? t('noMatchesSubAll') : t('noMatchesSubFilter')}
               </Text>
 
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={[styles.primaryPillBtn, { backgroundColor: colors.accent }]}
                 onPress={() => router.push('/match/create')}
                 activeOpacity={0.85}
               >
-                <Ionicons name="add-circle-outline" size={20} color="#09090b" style={{ marginRight: 8 }} />
+                <Ionicons name="add-circle-outline" size={22} color="#09090b" style={{ marginRight: 8 }} />
                 <Text style={styles.primaryPillBtnText}>{t('organizeMatch')}</Text>
               </TouchableOpacity>
             </View>
@@ -324,61 +351,120 @@ export default function HomeScreen() {
             matches.map((item) => {
               const spotsLeft = item.total_players_needed - item.joined_players_count;
               const isFull = spotsLeft <= 0;
+              const isRawPoint = item.location_name?.startsWith('Punto (');
 
               return (
-                <TouchableOpacity 
-                  key={item.id} 
-                  style={[styles.matchBentoCard, { backgroundColor: colors.card, borderColor: colors.cardBorder }]}
+                <TouchableOpacity
+                  key={item.id}
+                  style={[
+                    styles.matchBentoCard,
+                    { backgroundColor: colors.card, borderColor: colors.cardBorder },
+                  ]}
                   onPress={() => router.push(`/match/${item.id}`)}
-                  activeOpacity={0.9}
+                  activeOpacity={0.92}
                 >
                   <View style={styles.cardTopRow}>
                     <View style={[styles.sportTag, { backgroundColor: colors.accent }]}>
-                      <Ionicons name="trophy-outline" size={16} color="#09090b" style={{ marginRight: 6 }} />
+                      <Ionicons
+                        name="trophy-outline"
+                        size={16}
+                        color="#09090b"
+                        style={{ marginRight: 6 }}
+                      />
                       <Text style={styles.sportTagText}>{item.sport}</Text>
                     </View>
 
-                    <View style={[styles.spotsBadge, { backgroundColor: colors.inputBg }, isFull && { backgroundColor: '#fef2f2' }]}>
-                      <Text style={[styles.spotsBadgeText, { color: colors.accentDark }, isFull && { color: '#dc2626' }]}>
+                    <View
+                      style={[
+                        styles.spotsBadge,
+                        { backgroundColor: colors.inputBg },
+                        isFull && { backgroundColor: '#fef2f2' },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.spotsBadgeText,
+                          { color: colors.accentDark },
+                          isFull && { color: '#dc2626' },
+                        ]}
+                      >
                         {isFull ? t('fullBadge') : `${t('spotsLeft')}: ${spotsLeft}`}
                       </Text>
                     </View>
                   </View>
 
-                  <Text style={[styles.locationTitle, { color: colors.textPrimary }]} numberOfLines={2}>
-                    {item.location_name}
-                  </Text>
+                  {/* Botón Táctil de Ubicación (abre el mapa en lugar de mostrar coordenadas) */}
+                  <TouchableOpacity
+                    onPress={() => setSelectedLocationMatch(item)}
+                    style={[
+                      styles.locationPillBtn,
+                      { backgroundColor: colors.inputBg, borderColor: colors.cardBorder },
+                    ]}
+                    activeOpacity={0.75}
+                  >
+                    <Ionicons name="location" size={20} color={colors.accentDark} />
+                    <Text
+                      style={[styles.locationTitle, { color: colors.textPrimary }]}
+                      numberOfLines={1}
+                    >
+                      {isRawPoint ? 'Ver ubicación en el mapa' : item.location_name}
+                    </Text>
+                    <Ionicons name="map-outline" size={18} color={colors.textPrimary} />
+                  </TouchableOpacity>
 
                   <View style={styles.infoRow}>
-                    <Ionicons name="time-outline" size={18} color={colors.accentDark} style={{ marginRight: 8 }} />
-                    <Text style={[styles.infoText, { color: colors.textPrimary }]}>{formatMatchDate(item.date_time)}</Text>
+                    <Ionicons
+                      name="time-outline"
+                      size={20}
+                      color={colors.accentDark}
+                      style={{ marginRight: 8 }}
+                    />
+                    <Text style={[styles.infoText, { color: colors.textPrimary }]}>
+                      {formatMatchDate(item.date_time)}
+                    </Text>
                   </View>
 
                   <View style={styles.infoRow}>
-                    <Ionicons name="person-outline" size={18} color={colors.textSecondary} style={{ marginRight: 8 }} />
+                    <Ionicons
+                      name="person-outline"
+                      size={20}
+                      color={colors.textSecondary}
+                      style={{ marginRight: 8 }}
+                    />
                     <Text style={[styles.organizerText, { color: colors.textSecondary }]}>
-                      {t('organizedBy')} <Text style={{ color: colors.textPrimary, fontWeight: 'bold' }}>{item.profiles?.full_name || t('player')}</Text>
+                      {t('organizedBy')}{' '}
+                      <Text style={{ color: colors.textPrimary, fontWeight: 'bold' }}>
+                        {item.profiles?.full_name || t('player')}
+                      </Text>
                     </Text>
                   </View>
 
                   {item.notes ? (
                     <View style={[styles.notesBox, { backgroundColor: colors.inputBg }]}>
-                      <Text style={[styles.notesText, { color: colors.textSecondary }]}>"{item.notes}"</Text>
+                      <Text style={[styles.notesText, { color: colors.textPrimary }]}>
+                        "{item.notes}"
+                      </Text>
                     </View>
                   ) : null}
 
-                  <TouchableOpacity 
+                  {/* Botón Principal: Ver Detalles, Mapa y Chat antes de unirse */}
+                  <TouchableOpacity
                     style={[
-                      styles.joinBtn, 
-                      { backgroundColor: colors.accent }, 
-                      isFull && { backgroundColor: colors.cardBorder }
+                      styles.joinBtn,
+                      { backgroundColor: colors.accent },
+                      isFull && { backgroundColor: colors.cardBorder },
                     ]}
-                    onPress={() => !isFull && handleJoinMatch(item.id)}
-                    disabled={isFull}
+                    onPress={() => router.push(`/match/${item.id}`)}
                     activeOpacity={0.85}
                   >
+                    <Ionicons
+                      name="chatbubbles-outline"
+                      size={20}
+                      color={isFull ? colors.textSecondary : '#09090b'}
+                      style={{ marginRight: 8 }}
+                    />
                     <Text style={[styles.joinBtnText, isFull && { color: colors.textSecondary }]}>
-                      {isFull ? t('matchFull') : t('joinMatch')}
+                      {isFull ? t('matchFull') : 'Ver Detalles y Chat'}
                     </Text>
                   </TouchableOpacity>
                 </TouchableOpacity>
@@ -388,15 +474,28 @@ export default function HomeScreen() {
         </ScrollView>
 
         {/* Botón Flotante Verde Neón */}
-        <TouchableOpacity 
+        <TouchableOpacity
           style={[styles.fabButton, { backgroundColor: colors.accent }]}
           onPress={() => router.push('/match/create')}
           activeOpacity={0.85}
         >
           <Ionicons name="add" size={32} color="#09090b" />
         </TouchableOpacity>
-
       </View>
+
+      {/* Modal con el Mapa Interactivo */}
+      <MatchLocationModal
+        visible={!!selectedLocationMatch}
+        onClose={() => setSelectedLocationMatch(null)}
+        latitude={selectedCoords.latitude}
+        longitude={selectedCoords.longitude}
+        sportName={selectedLocationMatch?.sport || 'Deporte'}
+        placeLabel={
+          selectedLocationMatch?.location_name?.startsWith('Punto (')
+            ? 'Ubicación marcada por el creador'
+            : selectedLocationMatch?.location_name
+        }
+      />
     </View>
   );
 }
@@ -404,41 +503,140 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, alignItems: 'center' },
   phoneContainer: { flex: 1, width: '100%', maxWidth: 480, paddingTop: 48, paddingHorizontal: 20 },
-  topHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
+  topHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
   greetingTitle: { fontSize: 28, fontWeight: 'bold' },
-  greetingSubtitle: { fontSize: 15, fontWeight: '500' },
+  greetingSubtitle: { fontSize: 16, fontWeight: '500' },
   loginPillBtn: { paddingHorizontal: 18, paddingVertical: 10, borderRadius: 9999 },
-  loginPillText: { color: '#09090b', fontWeight: 'bold', fontSize: 15 },
-  filterChip: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 10, borderRadius: 9999, marginRight: 8, borderWidth: 1 },
-  filterChipText: { fontSize: 14, fontWeight: '600' },
-  aiBannerCard: { borderRadius: 24, padding: 16, borderWidth: 1, marginBottom: 16, elevation: 1 },
-  aiBadgeHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
-  aiPill: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 9999 },
-  aiPillText: { fontSize: 12, fontWeight: 'bold', color: '#09090b' },
-  aiTitle: { fontSize: 16, fontWeight: 'bold', marginBottom: 2 },
-  aiReason: { fontSize: 13, fontStyle: 'italic', lineHeight: 18 },
-  sectionHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
+  loginPillText: { color: '#09090b', fontWeight: 'bold', fontSize: 16 },
+  filterChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 9999,
+    marginRight: 8,
+    borderWidth: 1,
+  },
+  filterChipText: { fontSize: 15, fontWeight: '600' },
+  aiBannerCard: {
+    borderRadius: 24,
+    padding: 16,
+    borderWidth: 1,
+    marginBottom: 16,
+    elevation: 1,
+  },
+  aiBadgeHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  aiPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 9999,
+  },
+  aiPillText: { fontSize: 13, fontWeight: 'bold', color: '#09090b' },
+  aiTitle: { fontSize: 17, fontWeight: 'bold', marginBottom: 2 },
+  aiReason: { fontSize: 15, fontStyle: 'italic', lineHeight: 20 },
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
   sectionTitle: { fontSize: 20, fontWeight: 'bold' },
-  matchCountBadge: { fontSize: 13, fontWeight: 'bold', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8, borderWidth: 1 },
+  matchCountBadge: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 9999,
+    borderWidth: 1,
+  },
   loadingBox: { paddingVertical: 60, alignItems: 'center' },
-  emptyCard: { borderRadius: 28, padding: 28, alignItems: 'center', borderWidth: 1, marginTop: 10, elevation: 2 },
+  emptyCard: {
+    borderRadius: 28,
+    padding: 28,
+    alignItems: 'center',
+    borderWidth: 1,
+    marginTop: 10,
+    elevation: 2,
+  },
   emptyTitle: { fontSize: 20, fontWeight: 'bold', marginTop: 12, marginBottom: 8 },
-  emptySubtitle: { fontSize: 15, textAlign: 'center', lineHeight: 22, marginBottom: 24 },
-  primaryPillBtn: { paddingHorizontal: 24, paddingVertical: 14, borderRadius: 9999, flexDirection: 'row', alignItems: 'center' },
+  emptySubtitle: { fontSize: 16, textAlign: 'center', lineHeight: 22, marginBottom: 24 },
+  primaryPillBtn: {
+    paddingHorizontal: 24,
+    paddingVertical: 14,
+    borderRadius: 9999,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
   primaryPillBtnText: { color: '#09090b', fontWeight: 'bold', fontSize: 16 },
-  matchBentoCard: { borderRadius: 28, padding: 20, marginBottom: 16, borderWidth: 1, elevation: 2 },
-  cardTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
-  sportTag: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 9999 },
-  sportTagText: { color: '#09090b', fontWeight: 'bold', fontSize: 13 },
-  spotsBadge: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 },
-  spotsBadgeText: { fontSize: 12, fontWeight: 'bold' },
-  locationTitle: { fontSize: 18, fontWeight: 'bold', marginBottom: 12 },
+  matchBentoCard: {
+    borderRadius: 28,
+    padding: 20,
+    marginBottom: 16,
+    borderWidth: 1,
+    elevation: 2,
+  },
+  cardTopRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 14,
+  },
+  sportTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 9999,
+  },
+  sportTagText: { color: '#09090b', fontWeight: 'bold', fontSize: 15 },
+  spotsBadge: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 9999 },
+  spotsBadgeText: { fontSize: 13, fontWeight: 'bold' },
+  locationPillBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: 18,
+    borderWidth: 1,
+    marginBottom: 14,
+    gap: 8,
+  },
+  locationTitle: { flex: 1, fontSize: 16, fontWeight: 'bold' },
   infoRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
-  infoText: { fontSize: 15, fontWeight: '600' },
-  organizerText: { fontSize: 14 },
-  notesBox: { borderRadius: 14, padding: 12, marginTop: 6, marginBottom: 12 },
-  notesText: { fontSize: 14, fontStyle: 'italic' },
-  joinBtn: { height: 50, borderRadius: 9999, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', marginTop: 10 },
-  joinBtnText: { color: '#09090b', fontWeight: 'bold', fontSize: 16 },
-  fabButton: { position: 'absolute', bottom: 150, right: 20, width: 60, height: 60, borderRadius: 30, justifyContent: 'center', alignItems: 'center', elevation: 6 },
+  infoText: { fontSize: 16, fontWeight: '600' },
+  organizerText: { fontSize: 16 },
+  notesBox: { borderRadius: 16, padding: 14, marginTop: 6, marginBottom: 12 },
+  notesText: { fontSize: 15, fontStyle: 'italic' },
+  joinBtn: {
+    height: 54,
+    borderRadius: 9999,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 10,
+  },
+  joinBtnText: { color: '#09090b', fontWeight: 'bold', fontSize: 17 },
+  fabButton: {
+    position: 'absolute',
+    bottom: 115,
+    right: 20,
+    width: 62,
+    height: 62,
+    borderRadius: 31,
+    justifyContent: 'center',
+    alignItems: 'center',
+    elevation: 8,
+  },
 });
